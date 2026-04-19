@@ -8,19 +8,24 @@ import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
+from torch.utils.tensorboard import SummaryWriter
 
 from unified_train_pipeline.core.dict_config import DictConfig
 from unified_train_pipeline.hooks.hook_runner import HookRunner
 from unified_train_pipeline.interfaces.checkpoint_io import LocalCheckpointIO
 from unified_train_pipeline.registry.dataset_register import build_dataset
+from unified_train_pipeline.registry.evaluator_register import build_evaluator
 from unified_train_pipeline.registry.module_register import build_module
+from unified_train_pipeline.registry.visualizer_register import build_visualizer
 from unified_train_pipeline.train.distributed import (cleanup_distributed,
+                                                      ddp_all_reduce_sum,
                                                       get_local_rank, get_rank,
                                                       get_world_size,
                                                       init_distributed,
                                                       synchronize)
 from unified_train_pipeline.train.loop import (normalize_batch_to_data_dict,
                                                to_device)
+from unified_train_pipeline.train.validation_report import ValidationReportWriter
 
 logger = logging.getLogger("unified_train_pipeline")
 
@@ -34,8 +39,8 @@ class Trainer:
         self.world_size = 1
         self.device = self._setup_device()
         self.distributed = bool(self.config.train.get("distributed", False))
-        self._scaler = torch.cuda.amp.GradScaler(enabled=bool(
-            self.config.train.get("amp", False)))
+        scaler_enabled = bool(self.config.train.get("amp", False)) and torch.cuda.is_available()
+        self._scaler = torch.amp.GradScaler("cuda", enabled=scaler_enabled)
         self._hook_runner = HookRunner()
         self._checkpoint_io = LocalCheckpointIO()
 
@@ -44,7 +49,12 @@ class Trainer:
         self.optimizer = None
         self.lr_scheduler = None
         self.train_loader = None
+        self.val_loader = None
         self.global_step = 0
+        self._tb_writer = None
+        self._evaluator = None
+        self._visualizer = None
+        self._validation_report_writer = ValidationReportWriter()
 
     def _setup_device(self) -> torch.device:
         if torch.cuda.is_available():
@@ -82,6 +92,39 @@ class Trainer:
             drop_last=bool(dataset_cfg.get("drop_last", False)),
         )
 
+    def _build_val_loader(self):
+        validate_cfg = self.config.get("validate", {})
+        if not bool(validate_cfg.get("enabled", False)):
+            self.val_loader = None
+            return
+
+        if "val_dataset" in self.config and self.config.val_dataset is not None:
+            val_dataset_cfg = self.config.val_dataset
+        else:
+            val_dataset_cfg = DictConfig(self.config.dataset.to_dict())
+            val_dataset_cfg["train"] = False
+
+        val_dataset = build_dataset(val_dataset_cfg.name, val_dataset_cfg, self.config)
+        sampler = None
+        if self.distributed:
+            sampler = DistributedSampler(val_dataset,
+                                         num_replicas=self.world_size,
+                                         rank=self.rank,
+                                         shuffle=False)
+        collate_fn = getattr(val_dataset, "collate_fn", None)
+        val_batch_size = int(
+            val_dataset_cfg.get("batch_size", self.config.dataset.get("batch_size", 32)))
+        self.val_loader = DataLoader(
+            val_dataset,
+            batch_size=val_batch_size,
+            shuffle=False,
+            sampler=sampler,
+            num_workers=int(
+                validate_cfg.get("num_workers", self.config.train.get("num_workers", 2))),
+            collate_fn=collate_fn,
+            drop_last=False,
+        )
+
     def _build_model_and_loss(self):
         model_cfg = self.config.model
         self.model = build_module(model_cfg.name, model_cfg, self.config).to(
@@ -117,6 +160,24 @@ class Trainer:
         else:
             raise ValueError(f"Unsupported optimizer: {optimizer_name}")
 
+    def _build_evaluator(self):
+        validate_cfg = self.config.get("validate", {})
+        if not bool(validate_cfg.get("enabled", False)):
+            self._evaluator = None
+            return
+        if "evaluation" not in self.config or self.config.evaluation is None:
+            raise ValueError(
+                "Validation is enabled but 'evaluation.name' is missing in config.")
+        self._evaluator = build_evaluator(self.config.evaluation.name, self.config.evaluation,
+                                          self.config)
+
+    def _build_visualizer(self):
+        if "visualization" not in self.config or self.config.visualization is None:
+            self._visualizer = None
+            return
+        self._visualizer = build_visualizer(self.config.visualization.name,
+                                            self.config.visualization, self.config)
+
     def _setup_runtime(self):
         self._setup_seed(int(self.config.get("seed", 42)))
         if self.distributed:
@@ -126,12 +187,28 @@ class Trainer:
             if torch.cuda.is_available():
                 self.device = torch.device(f"cuda:{get_local_rank()}")
         self._build_train_loader()
+        self._build_val_loader()
         self._build_model_and_loss()
         self._build_optimizer()
+        self._build_evaluator()
+        self._build_visualizer()
+        self._setup_tensorboard()
 
         if self.rank == 0:
             logging.basicConfig(level=logging.INFO,
                                 format="[%(asctime)s][%(levelname)s] %(message)s")
+
+    def _setup_tensorboard(self):
+        tb_cfg = self.config.get("tensorboard", {})
+        if self.rank != 0 or not bool(tb_cfg.get("enabled", False)):
+            self._tb_writer = None
+            return
+        log_dir = tb_cfg.get("log_dir")
+        if not log_dir:
+            output_dir = Path(self.config.train.get("output_dir", "outputs"))
+            log_dir = str(output_dir / "tb")
+        self._tb_writer = SummaryWriter(log_dir=log_dir)
+        logger.info("TensorBoard logging to %s", log_dir)
 
     def _compute_loss(self, data_dict: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         if self.loss_module is not None:
@@ -160,6 +237,100 @@ class Trainer:
         self._checkpoint_io.save(checkpoint, str(checkpoint_path))
         logger.info("Saved checkpoint to %s", checkpoint_path)
 
+    def _should_validate_by_step(self) -> bool:
+        validate_cfg = self.config.get("validate", {})
+        if not bool(validate_cfg.get("enabled", False)) or self.val_loader is None:
+            return False
+        interval = int(validate_cfg.get("val_interval_steps", 0))
+        return interval > 0 and self.global_step > 0 and self.global_step % interval == 0
+
+    def _should_validate_by_epoch(self, epoch: int) -> bool:
+        validate_cfg = self.config.get("validate", {})
+        if not bool(validate_cfg.get("enabled", False)) or self.val_loader is None:
+            return False
+        interval = int(validate_cfg.get("val_interval_epochs", 0))
+        return interval > 0 and (epoch + 1) % interval == 0
+
+    def _should_log_images(self) -> bool:
+        tb_cfg = self.config.get("tensorboard", {})
+        if self._tb_writer is None or not bool(tb_cfg.get("enabled", False)):
+            return False
+        interval = int(tb_cfg.get("image_interval_steps", 0))
+        return interval > 0 and self.global_step > 0 and self.global_step % interval == 0
+
+    def _validate_once(self, context: Dict[str, Any], trigger: str) -> Optional[Dict[str, float]]:
+        if self.val_loader is None or self._evaluator is None:
+            return None
+
+        if self.distributed and isinstance(self.val_loader.sampler, DistributedSampler):
+            self.val_loader.sampler.set_epoch(int(context.get("epoch", 0)))
+
+        was_training = self.model.training
+        self.model.eval()
+        max_val_batches = int(self.config.get("validate", {}).get("max_val_batches", 0))
+        should_log_images = self.rank == 0 and self._should_log_images()
+        max_visualization_samples = int(self.config.get("tensorboard", {}).get(
+            "num_visualization_samples", 16))
+        initial_context = {
+            "trigger": trigger,
+            "epoch": int(context.get("epoch", 0)),
+            "global_step": self.global_step,
+            "device": self.device,
+            "should_log_images": should_log_images,
+            "max_visualization_samples": max_visualization_samples,
+        }
+        self._evaluator.reset(initial_context)
+
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(self.val_loader):
+                if max_val_batches > 0 and batch_idx >= max_val_batches:
+                    break
+
+                data_dict = normalize_batch_to_data_dict(batch)
+                data_dict = to_device(data_dict, self.device)
+                data_dict = self.model(data_dict)
+                loss_dict = self._compute_loss(data_dict)
+                data_dict["_loss_dict"] = loss_dict
+                update_context = {
+                    "trigger": trigger,
+                    "epoch": int(context.get("epoch", 0)),
+                    "global_step": self.global_step,
+                    "val_batch_idx": batch_idx,
+                }
+                self._evaluator.update(data_dict, update_context)
+
+        reduce_fn = ddp_all_reduce_sum if self.distributed else None
+        result = self._evaluator.finalize(
+            {
+                "trigger": trigger,
+                "epoch": int(context.get("epoch", 0)),
+                "global_step": self.global_step,
+            },
+            reduce_fn=reduce_fn,
+        )
+        if self.rank == 0:
+            visualizer_context = {
+                "global_step": self.global_step,
+                "should_log_images": should_log_images,
+            }
+            if self._tb_writer is not None and self._visualizer is not None:
+                self._visualizer.log(result, visualizer_context, self._tb_writer)
+            report_path = self._validation_report_writer.save(result, self.config)
+            logger.info(
+                "validate trigger=%s step=%d val_loss=%.6f val_accuracy=%.4f processed_val_batches=%d report=%s",
+                trigger,
+                self.global_step,
+                float(result.metrics.get("val/loss", 0.0)),
+                float(result.metrics.get("val/accuracy", 0.0)),
+                int(result.meta.get("processed_val_batches", 0)),
+                report_path,
+            )
+
+        if was_training:
+            self.model.train()
+        synchronize()
+        return dict(result.metrics)
+
     def _train_one_batch(self, batch: Any, context: Dict[str, Any]) -> Optional[float]:
         data_dict = normalize_batch_to_data_dict(batch)
         data_dict = to_device(data_dict, self.device)
@@ -167,7 +338,7 @@ class Trainer:
 
         self.optimizer.zero_grad(set_to_none=True)
         use_amp = bool(self.config.train.get("amp", False)) and self.device.type == "cuda"
-        with torch.cuda.amp.autocast(enabled=use_amp):
+        with torch.amp.autocast(device_type="cuda", enabled=use_amp):
             data_dict = self.model(data_dict)
             data_dict = self._hook_runner.run_after_forward(data_dict, context)
             loss_dict = self._compute_loss(data_dict)
@@ -193,6 +364,9 @@ class Trainer:
 
         self.global_step += 1
         data_dict = self._hook_runner.run_after_step(data_dict, context)
+        if self.rank == 0 and self._tb_writer is not None:
+            self._tb_writer.add_scalar("train/total_loss", float(total_loss.detach().item()),
+                                       self.global_step)
         return float(total_loss.detach().item())
 
     def train(self):
@@ -227,13 +401,26 @@ class Trainer:
                         )
                     if self.global_step > 0 and self.global_step % save_interval == 0:
                         self._save_checkpoint()
+                    if self._should_validate_by_step():
+                        self._validate_once(context, trigger="step")
 
                     if max_steps > 0 and self.global_step >= max_steps:
                         break
 
                 synchronize()
+                if self._should_validate_by_epoch(epoch):
+                    epoch_context = {
+                        "epoch": epoch,
+                        "batch_idx": -1,
+                        "global_step": self.global_step,
+                        "rank": self.rank,
+                    }
+                    self._validate_once(epoch_context, trigger="epoch")
                 if max_steps > 0 and self.global_step >= max_steps:
                     break
         finally:
+            if self.rank == 0 and self._tb_writer is not None:
+                self._tb_writer.flush()
+                self._tb_writer.close()
             if self.distributed:
                 cleanup_distributed()

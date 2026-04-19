@@ -29,6 +29,7 @@
 - 设置随机种子
 - 构建 dataset/dataloader
 - 构建 model/loss/optimizer
+- 根据配置构建 evaluator/visualizer（可选）
 
 ### 3. 迭代训练循环 (`train/trainer.py`)
 
@@ -51,6 +52,16 @@ optimizer.step()
 
 按 `log_interval` 输出 loss，按 `save_interval` 保存 checkpoint。
 
+### 5. 验证与报告 (`train/trainer.py`, `train/validation_report.py`)
+
+当满足 `validate.val_interval_steps` 或 `validate.val_interval_epochs` 时，执行 `_validate_once()`：
+
+1. 遍历 `val_loader`，前向得到 `data_dict`
+2. 调用 evaluator `update(...)` 聚合任务指标
+3. 调用 evaluator `finalize(...)` 产出 `EvaluationResult`
+4. 调用 visualizer `log(...)` 写 TensorBoard（可选）
+5. 调用 `ValidationReportWriter.save(...)` 写 `val_metrics-<val-id>.json`
+
 ## 时序图
 
 ```text
@@ -60,12 +71,15 @@ Trainer -> DataLoader: fetch batch
 Trainer -> Model: forward(data_dict)
 Trainer -> Loss: total_loss
 Trainer -> Optimizer: step
+Trainer -> Evaluator: update/finalize (validate interval)
+Trainer -> Visualizer: log to TensorBoard
+Trainer -> ValidationReportWriter: save report json
 Trainer -> LocalCheckpointIO: save (interval)
 ```
 
 ## 成功路径
 
-配置可解析、注册名称可构建、loss 可回传 `total_loss` 时，训练可稳定推进并按周期产生日志与 checkpoint。
+配置可解析、注册名称可构建、loss 可回传 `total_loss` 时，训练可稳定推进并按周期产生日志、验证结果与 checkpoint。
 
 ## 异常路径
 

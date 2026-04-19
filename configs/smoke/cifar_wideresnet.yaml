@@ -1,0 +1,31 @@
+seed: 42
+train:
+  max_epochs: 1
+  max_steps: 2
+  log_interval: 1
+  save_interval: 1000
+  output_dir: unified_train_pipeline_outputs/smoke/cifar_wideresnet
+  gradient_clip_norm: null
+  distributed: false
+  num_workers: 0
+  amp: false
+dataset:
+  name: Cifar10Dataset
+  root: ./data
+  train: true
+  download: true
+  batch_size: 16
+model:
+  name: UnifiedModel
+  submodules:
+    backbone:
+      name: CifarWideResNetBackbone
+      num_classes: 10
+      width: 32
+loss:
+  name: ClassificationCrossEntropyLoss
+  weight: 1.0
+optimizer:
+  name: adam
+  lr: 0.0005
+  weight_decay: 0.0

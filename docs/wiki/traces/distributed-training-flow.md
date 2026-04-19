@@ -36,7 +36,7 @@ torchrun --nproc_per_node=2 -m scripts.train --config configs/mnist_mlp.yaml --d
 
 ### 4. 基于进程编号的副作用控制 (`train/trainer.py`)
 
-日志和 checkpoint 保存仅在 rank 0 执行，epoch 结束调用 `synchronize()` 对齐进度。
+日志、checkpoint、TensorBoard 写入与验证报告落盘仅在 rank 0 执行；验证统计可在 evaluator `finalize` 阶段通过 all-reduce 聚合。epoch 结束调用 `synchronize()` 对齐进度。
 
 ## 时序图
 
@@ -46,7 +46,8 @@ torchrun -> 各 rank 进程
 各 rank -> init_distributed()
 各 rank -> DDP(model) + DistributedSampler
 各 rank -> forward/backward/step
-rank 0 -> logging + checkpoint
+各 rank -> evaluator update/finalize (validate interval)
+rank 0 -> logging + checkpoint + visualizer + val report
 所有 rank -> synchronize() -> 下一轮 epoch
 ```
 

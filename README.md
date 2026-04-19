@@ -59,6 +59,14 @@ python -m scripts.train \
   --config configs/mnist_mlp.yaml
 ```
 
+### 3.1) Start TensorBoard
+
+```bash
+tensorboard --logdir unified_train_pipeline_outputs/mnist_mlp/tb
+```
+
+Then open `http://localhost:6006` in your browser.
+
 ### 4) Run distributed training (example)
 
 ```bash
@@ -87,4 +95,11 @@ python -m scripts.smoke_test
 - COCO128 dataset wrapper supports synthetic fallback if local COCO files are not found.
 - Checkpoint backend defaults to local filesystem through `LocalCheckpointIO`.
 - If you need real COCO annotations, install `pycocotools` manually in your environment.
+- `configs/mnist_mlp.yaml` now includes validation and TensorBoard defaults:
+  - `validate.val_interval_steps` and `validate.val_interval_epochs` can both be enabled.
+  - `evaluation.name` selects the evaluator plugin (current default: `MnistClassificationEvaluator`).
+  - `visualization.name` selects the visualizer plugin (current default: `MnistTensorBoardVisualizer`).
+  - Validation writes `val/loss`, `val/accuracy`, per-digit breakdown, confusion matrix, and `val_metrics-<val-id>.json`.
+  - TensorBoard writes `train/total_loss`, validation scalars, per-digit scalars, confusion matrix, and sampled validation images.
+- To add a new task-level validation flow (for example detection), implement task-specific plugins in `tasks/<task>/evaluators.py` and `tasks/<task>/visualizers.py`, then switch names in config without changing `train/trainer.py`.
 - `.claude/skills/deep-codebase-wiki/SKILL.md` is adapted from [deep-codebase-wiki on MCP Market](https://mcpmarket.com/zh/tools/skills/deep-codebase-wiki).

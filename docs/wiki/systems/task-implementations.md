@@ -8,7 +8,7 @@
 
 ### MNIST 任务实现（`tasks/mnist/datasets.py`, `tasks/mnist/models.py`）
 
-提供 `MnistDataset`、`MnistMlpBackbone`、`MnistConvBackbone`、`ClassificationCrossEntropyLoss`。
+提供 `MnistDataset`、`MnistMlpBackbone`、`MnistConvBackbone`、`ClassificationCrossEntropyLoss`，以及验证插件 `MnistClassificationEvaluator` 与 `MnistTensorBoardVisualizer`（位于 `tasks/mnist/evaluators.py`、`tasks/mnist/visualizers.py`）。
 
 ### CIFAR10 任务实现（`tasks/cifar10/datasets.py`, `tasks/cifar10/models.py`）
 
@@ -32,7 +32,7 @@ Dataset __getitem__/collate_fn
 Trainer 执行优化步骤
 ```
 
-分类任务通常使用 `image/label/logits`，检测任务通常使用 `image/targets/detector_loss_dict/total_loss`。
+分类任务通常使用 `image/label/logits`，检测任务通常使用 `image/targets/detector_loss_dict/total_loss`。在插件化验证路径下，evaluator 负责把任务特定字段转换为统一 `EvaluationResult`。
 
 ## 文件位置
 
@@ -66,6 +66,8 @@ Trainer 执行优化步骤
 面向框架的接口统一为：
 - dataset: `__getitem__` 返回 `Dict[str, Any]`
 - model/loss: `forward(data_dict)` 返回更新后的 `data_dict` 或 loss 字典
+- evaluator: `reset(context) -> update(data_dict, context) -> finalize(context)` 输出 `EvaluationResult`
+- visualizer: `log(result, context, writer)` 将评测结果写入 TensorBoard 等后端
 
 ## 错误处理
 

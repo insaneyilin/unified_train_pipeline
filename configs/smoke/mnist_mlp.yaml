@@ -1,32 +1,32 @@
 seed: 42
 train:
   max_epochs: 1
-  max_steps: 0  # 10
+  max_steps: 2
   log_interval: 1
-  save_interval: 100
-  output_dir: unified_train_pipeline_outputs/mnist_mlp
+  save_interval: 1000
+  output_dir: unified_train_pipeline_outputs/smoke/mnist_mlp
   gradient_clip_norm: null
   distributed: false
-  num_workers: 2
+  num_workers: 0
   amp: false
 dataset:
   name: MnistDataset
   root: ./data
   train: true
   download: true
-  batch_size: 64
+  batch_size: 16
 val_dataset:
   name: MnistDataset
   root: ./data
   train: false
   download: true
-  batch_size: 128
+  batch_size: 16
 validate:
   enabled: true
-  val_interval_steps: 2
+  val_interval_steps: 1
   val_interval_epochs: 1
-  max_val_batches: 0  # 5
-  num_workers: 2
+  max_val_batches: 1
+  num_workers: 0
 evaluation:
   name: MnistClassificationEvaluator
   num_classes: 10
@@ -34,9 +34,9 @@ visualization:
   name: MnistTensorBoardVisualizer
 tensorboard:
   enabled: true
-  log_dir: unified_train_pipeline_outputs/mnist_mlp/tb
-  image_interval_steps: 2
-  num_visualization_samples: 16
+  log_dir: unified_train_pipeline_outputs/smoke/mnist_mlp/tb
+  image_interval_steps: 1
+  num_visualization_samples: 4
   image_buckets:
     random: true
     digit: true
@@ -46,7 +46,7 @@ model:
   submodules:
     backbone:
       name: MnistMlpBackbone
-      hidden_dim: 256
+      hidden_dim: 64
       num_classes: 10
 loss:
   name: ClassificationCrossEntropyLoss

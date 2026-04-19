@@ -24,10 +24,14 @@ class Trainer:
 - 初始化阶段选择 device（cuda/mps/cpu）并配置 `GradScaler`
 - 训练阶段支持 loss 多来源回退逻辑（loss module / `_loss_dict` / `total_loss`)
 - 分布式模式自动设置 rank/world 与 DDP 包装
+- 验证阶段通过 evaluator/visualizer 插件委托完成指标计算与可视化
+- 评测报告通过 `ValidationReportWriter` 统一落盘到 `val_metrics-<val-id>.json`
 
 **状态管理**:
 - `self.global_step` - 全局步数
 - `self.rank/self.world_size` - 分布式上下文
+- `self._evaluator` - 验证评测插件实例
+- `self._visualizer` - 验证可视化插件实例
 
 ## 使用示例
 
@@ -46,6 +50,9 @@ trainer.train()
 - [UnifiedModel](unified-model.md) - 被 registry 构建后作为 `self.model`
 - [DictConfig](dict-config.md) - 承载运行时配置
 - `hooks/hook_runner.py` - 执行 hook 链
+- `interfaces/evaluator.py` - 验证结果协议 (`EvaluationResult`)
+- `interfaces/visualizer.py` - 可视化协议
+- `train/validation_report.py` - 验证报告写入
 
 **被调用方**:
 - `scripts/train.py` - CLI 入口直接调用
@@ -54,6 +61,7 @@ trainer.train()
 
 - 不支持 optimizer 名称时抛出异常。
 - 缺失损失输出时抛出异常，防止静默失败。
+- 启用验证但缺失 `evaluation.name` 时抛出异常。
 
 ## 测试
 

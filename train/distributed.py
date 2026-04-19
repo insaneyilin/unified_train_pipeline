@@ -45,5 +45,13 @@ def synchronize():
 
 def ddp_all_reduce_sum(tensor: torch.Tensor) -> torch.Tensor:
     if get_world_size() > 1 and is_dist_initialized():
-        dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+        # Gloo backend does not reliably support non-CPU tensors on all platforms
+        # (for example MPS tensors on macOS). Reduce on CPU and move back when needed.
+        backend = dist.get_backend()
+        if backend == "gloo" and tensor.device.type != "cpu":
+            cpu_tensor = tensor.detach().to("cpu")
+            dist.all_reduce(cpu_tensor, op=dist.ReduceOp.SUM)
+            tensor.copy_(cpu_tensor.to(tensor.device))
+        else:
+            dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
     return tensor

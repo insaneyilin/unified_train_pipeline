@@ -2,7 +2,7 @@
 
 ## 作用
 
-该系统负责把“配置中的名字”映射为“可实例化的 Python 类”，并通过任务包自动导入机制确保注册在训练开始前完成。
+该系统负责把“配置中的名字”映射为“可实例化的 Python 类”，并通过任务包自动导入机制确保注册在训练开始前完成。当前注册范围包含 dataset、model/loss、evaluator、visualizer。
 
 ## 组成组件
 
@@ -19,6 +19,14 @@
 
 维护 `DATASET_REGISTER`，用于注册并构建 dataset。
 
+### 评测注册器（`registry/evaluator_register.py`，类名 `EvaluatorRegister`）
+
+维护 `EVALUATOR_REGISTER`，用于注册并构建 evaluator。
+
+### 可视化注册器（`registry/visualizer_register.py`，类名 `VisualizerRegister`）
+
+维护 `VISUALIZER_REGISTER`，用于注册并构建 visualizer。
+
 ### 任务启动注册 (`tasks/__init__.py`)
 
 导入时调用 `auto_import_modules(__name__)`，递归加载子任务包，从而触发其中 decorator 注册。
@@ -32,14 +40,14 @@ tasks 自动导入子模块
   ↓
 decorator 将类注册进 registries
   ↓
-Trainer 根据配置名调用 build_dataset/build_module
+Trainer 根据配置名调用 build_dataset/build_module/build_evaluator/build_visualizer
   ↓
-实例化 dataset/model/loss 对象
+实例化 dataset/model/loss/evaluator/visualizer 对象
 ```
 
 ## 文件位置
 
-- 核心逻辑: `registry/module_register.py`, `registry/dataset_register.py`
+- 核心逻辑: `registry/module_register.py`, `registry/dataset_register.py`, `registry/evaluator_register.py`, `registry/visualizer_register.py`
 - 启动导入: `tasks/__init__.py`, `tasks/*/__init__.py`
 - 调用位置: `train/trainer.py`
 
@@ -57,11 +65,15 @@ Trainer 根据配置名调用 build_dataset/build_module
 无独立环境变量。配置依赖主要体现在：
 - `dataset.name` 必须匹配某个已注册 dataset 类名
 - `model.name` 与 `loss.name` 必须匹配某个已注册 module 类名
+- `evaluation.name` 必须匹配某个已注册 evaluator 类名（当启用验证时）
+- `visualization.name` 必须匹配某个已注册 visualizer 类名（配置可视化时）
 
 ## 接口（API）
 
 - `build_module(name: str, *args, **kwargs)`
 - `build_dataset(name: str, *args, **kwargs)`
+- `build_evaluator(name: str, *args, **kwargs)`
+- `build_visualizer(name: str, *args, **kwargs)`
 - `auto_import_modules(package_name: str, package_path: str = None, exclude_patterns = None)`
 
 ## 错误处理
