@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "unified-train-pipeline"
+version = "0.1.0"
+description = "Config-driven unified training pipeline"
+authors = ["yilin.gui <yilin.gui@gmail.com>"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.11"
+torch = "2.7.0"
+torchvision = "0.22.0"
+pyyaml = "6.0.2"
+numpy = "1.26.4"
+pillow = "10.4.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

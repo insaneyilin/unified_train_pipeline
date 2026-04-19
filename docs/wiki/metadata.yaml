@@ -1,0 +1,15 @@
+source_type: local
+source_path: /Users/yilin/lab_codes/unified_train_pipeline
+analyzed_at: '2026-04-19T16:15:00Z'
+commit_sha: none
+scope: full
+primary_language: Python
+frameworks:
+  - PyTorch
+  - torchvision
+  - PyYAML
+focus_areas:
+  - training-orchestration
+  - registry-and-plugin-loading
+  - task-implementations
+analysis_depth: standard

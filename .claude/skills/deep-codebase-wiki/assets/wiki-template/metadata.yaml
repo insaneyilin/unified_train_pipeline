@@ -1,0 +1,10 @@
+source_type: github
+repository: owner/repo
+source_path: ''
+analyzed_at: '2026-01-10T00:00:00Z'
+commit_sha: 0000000000000000000000000000000000000000
+scope: full
+primary_language: Unknown
+frameworks: []
+focus_areas: []
+analysis_depth: standard

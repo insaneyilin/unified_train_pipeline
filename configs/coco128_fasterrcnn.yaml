@@ -1,0 +1,32 @@
+seed: 42
+train:
+  max_epochs: 1
+  max_steps: 2
+  log_interval: 1
+  save_interval: 100
+  output_dir: unified_train_pipeline_outputs/coco128_fasterrcnn
+  gradient_clip_norm: null
+  distributed: false
+  num_workers: 2
+  amp: false
+dataset:
+  name: Coco128DetectionDataset
+  root: ./data/coco128/images/train2017
+  ann_file: ./data/coco128/annotations/instances_train2017.json
+  synthetic_length: 16
+  image_size: 320
+  batch_size: 2
+model:
+  name: UnifiedModel
+  submodules:
+    detector:
+      name: CocoFasterRCNNDetector
+      num_classes: 81
+loss:
+  name: DetectionLossFromDataDict
+  weight: 1.0
+optimizer:
+  name: sgd
+  lr: 0.001
+  momentum: 0.9
+  weight_decay: 0.0

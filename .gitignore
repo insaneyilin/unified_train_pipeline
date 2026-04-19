@@ -1,0 +1,35 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tooling cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS/editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Runtime outputs
+outputs/
+unified_train_pipeline_outputs/
+data/
+
+# Logs and checkpoints
+*.log
+*.pt
+*.pth
+*.ckpt
+
